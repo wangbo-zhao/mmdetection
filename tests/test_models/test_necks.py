@@ -1,9 +1,10 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import pytest
 import torch
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from mmdet.models.necks import (FPN, ChannelMapper, CTResNetNeck,
-                                DilatedEncoder, SSDNeck, YOLOV3Neck)
+from mmdet.models.necks import (FPN, YOLOXPAFPN, ChannelMapper, CTResNetNeck,
+                                DilatedEncoder, DyHead, SSDNeck, YOLOV3Neck)
 
 
 def test_fpn():
@@ -373,3 +374,56 @@ def test_ssd_neck():
     assert outs[0].shape == (1, 4, 8, 8)
     assert outs[1].shape == (1, 8, 8, 8)
     assert outs[2].shape == (1, 16, 8, 8)
+
+
+def test_yolox_pafpn():
+    s = 64
+    in_channels = [8, 16, 32, 64]
+    feat_sizes = [s // 2**i for i in range(4)]  # [64, 32, 16, 8]
+    out_channels = 24
+    feats = [
+        torch.rand(1, in_channels[i], feat_sizes[i], feat_sizes[i])
+        for i in range(len(in_channels))
+    ]
+    neck = YOLOXPAFPN(in_channels=in_channels, out_channels=out_channels)
+    outs = neck(feats)
+    assert len(outs) == len(feats)
+    for i in range(len(feats)):
+        assert outs[i].shape[1] == out_channels
+        assert outs[i].shape[2] == outs[i].shape[3] == s // (2**i)
+
+    # test depth-wise
+    neck = YOLOXPAFPN(
+        in_channels=in_channels, out_channels=out_channels, use_depthwise=True)
+
+    from mmcv.cnn.bricks import DepthwiseSeparableConvModule
+    assert isinstance(neck.downsamples[0], DepthwiseSeparableConvModule)
+
+    outs = neck(feats)
+    assert len(outs) == len(feats)
+    for i in range(len(feats)):
+        assert outs[i].shape[1] == out_channels
+        assert outs[i].shape[2] == outs[i].shape[3] == s // (2**i)
+
+
+def test_dyhead():
+    s = 64
+    in_channels = 8
+    out_channels = 16
+    feat_sizes = [s // 2**i for i in range(4)]  # [64, 32, 16, 8]
+    feats = [
+        torch.rand(1, in_channels, feat_sizes[i], feat_sizes[i])
+        for i in range(len(feat_sizes))
+    ]
+    neck = DyHead(
+        in_channels=in_channels, out_channels=out_channels, num_blocks=3)
+    outs = neck(feats)
+    assert len(outs) == len(feats)
+    for i in range(len(outs)):
+        assert outs[i].shape[1] == out_channels
+        assert outs[i].shape[2] == outs[i].shape[3] == s // (2**i)
+
+    feat = torch.rand(1, 8, 4, 4)
+    # input feat must be tuple or list
+    with pytest.raises(AssertionError):
+        neck(feat)
